@@ -12,6 +12,6 @@
     "cors": "^2.8.5",
     "express": "^5.1.0",
     "pdfkit": "^0.17.1",
-    "sqlite3": "^5.1.7"
+    "better-sqlite3": "^9.0.0"
   }
 }

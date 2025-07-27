@@ -2,7 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const PDFDocument = require('pdfkit');
-const sqlite3 = require('sqlite3').verbose();
+const Database = require('better-sqlite3');
 const path = require('path');
 
 const app = express();
@@ -13,31 +13,28 @@ app.use(bodyParser.json());
 
 // SQLite DB setup
 const dbPath = path.resolve(__dirname, 'pos.db');
-const db = new sqlite3.Database(dbPath, (err) => {
-  if (err) return console.error(err.message);
-  console.log('Connected to the SQLite database.');
-});
+const db = new Database(dbPath);
 
 // Create tables if not exists
-db.serialize(() => {
-  db.run(`CREATE TABLE IF NOT EXISTS sessions (
+db.exec(`
+  CREATE TABLE IF NOT EXISTS sessions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     computer TEXT,
     duration INTEGER,
     charge INTEGER,
     timestamp TEXT
-  )`);
+  );
 
-  db.run(`CREATE TABLE IF NOT EXISTS products (
+  CREATE TABLE IF NOT EXISTS products (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT,
     price REAL,
     timestamp TEXT
-  )`);
-});
+  );
+`);
 
 app.get('/', (req, res) => {
-  res.send('Cyber Café POS API with SQLite is running.');
+  res.send('Cyber Café POS API with SQLite (better-sqlite3) is running.');
 });
 
 // Save session and products
@@ -45,29 +42,26 @@ app.post('/save-sale', (req, res) => {
   const { items = [], sessions = [] } = req.body;
   const timestamp = new Date().toISOString();
 
-  db.serialize(() => {
-    sessions.forEach((s) => {
-      db.run(
-        `INSERT INTO sessions (computer, duration, charge, timestamp) VALUES (?, ?, ?, ?)`,
-        [s.computer, s.duration, s.charge, timestamp],
-        (err) => {
-          if (err) console.error('Session insert error:', err.message);
-        }
-      );
+  const insertSession = db.prepare(`INSERT INTO sessions (computer, duration, charge, timestamp) VALUES (?, ?, ?, ?)`);
+  const insertProduct = db.prepare(`INSERT INTO products (name, price, timestamp) VALUES (?, ?, ?)`);
+
+  const transaction = db.transaction(() => {
+    sessions.forEach(s => {
+      insertSession.run(s.computer, s.duration, s.charge, timestamp);
     });
 
-    items.forEach((i) => {
-      db.run(
-        `INSERT INTO products (name, price, timestamp) VALUES (?, ?, ?)`,
-        [i.name, i.price, timestamp],
-        (err) => {
-          if (err) console.error('Product insert error:', err.message);
-        }
-      );
+    items.forEach(i => {
+      insertProduct.run(i.name, i.price, timestamp);
     });
   });
 
-  res.send({ message: 'Sale recorded successfully.' });
+  try {
+    transaction();
+    res.send({ message: 'Sale recorded successfully.' });
+  } catch (err) {
+    console.error('Transaction error:', err.message);
+    res.status(500).send({ error: 'Failed to record sale.' });
+  }
 });
 
 // Generate PDF receipt
@@ -98,7 +92,7 @@ app.post('/generate-receipt', (req, res) => {
   doc.end();
 });
 
-// Mobile-friendly static styles (optional future implementation)
+// Optional: Serve public assets
 app.use('/public', express.static(path.join(__dirname, 'public')));
 
 app.listen(PORT, () => {
